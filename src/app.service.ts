@@ -7,6 +7,8 @@ export class AppService {
   private readonly ALCHEMY_APIKEY = process.env.ALCHEMY_API_KEY;
   private readonly BAYC_CONTRACT_ADDRESS = process.env.BAYC_CONTRACT_ADDRESS;
 
+  isExact: boolean = false;
+
   private readonly alchemy: Alchemy;
 
   constructor() {
@@ -19,6 +21,7 @@ export class AppService {
   async run() {
     const epochTimes = await this.getEpochTimeInput();
     console.log(`get ETH value for epoch time: ${epochTimes}`);
+    console.log('please wait');
     await this.getETHBalancesByEpochTime(epochTimes);
   }
 
@@ -29,7 +32,6 @@ export class AppService {
       output: process.stdout,
     });
 
-    // 1738627200
     const query: string = 'Enter epoch times with a range (separated by spaces) or a single value (will get data on that date): ';
     return new Promise((resolve) => {
       rl.question(query, (answer: string) => {
@@ -61,36 +63,56 @@ export class AppService {
     }
   }
 
-  async getBlockByTimestamp(timestamp: number): Promise<number> {
+  async getBlockByTimestamp(timestamps: number[]): Promise<{ startBlockNumber: number | null, endBlockNumber: number | null }> {
     const latestBlock = await this.alchemy.core.getBlock("latest");
-    let low = 0;
-    let high = latestBlock.number;
-    console.log(`latest block : ${high}`);
-    while (low <= high) {
-      const mid = Math.floor((low + high) / 2);
-      const block = await this.alchemy.core.getBlock(mid);
-
-      console.log(`retrieved block: ${block.timestamp}`);
-
-      if (block.timestamp === timestamp) {
+    
+    const isUseClosest = timestamps.length > 1 && timestamps[0] !== timestamps[1];
+  
+    const binarySearchBlock = async (timestamp: number): Promise<number | null> => {
+      let low = 0;
+      let high = latestBlock.number;
+      let closestBlockNumber: number | null = null;
+  
+      while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        const block = await this.alchemy.core.getBlock(mid);
+  
+        if (block.timestamp === timestamp) {
           return block.number;
-      }
-
-      if (block.timestamp < timestamp) {
+        }
+  
+        if (block.timestamp < timestamp) {
           low = mid + 1;
-      } else {
+        } else {
           high = mid - 1;
+        }
+  
+        if (isUseClosest) {
+          if (closestBlockNumber === null || 
+              (timestamp > timestamps[0] && timestamp < timestamps[1] && 
+              Math.abs(block.timestamp - timestamp) < Math.abs((await this.alchemy.core.getBlock(closestBlockNumber)).timestamp - timestamp))) {
+            closestBlockNumber = mid;
+          }
+        }
       }
-    }
-
-    return null;
-  }
+  
+      return closestBlockNumber;
+    };
+  
+    const [startBlockNumber, endBlockNumber] = await Promise.all([
+      binarySearchBlock(timestamps[0]),
+      timestamps.length > 1 ? binarySearchBlock(timestamps[1]) : null,
+    ]);
+  
+    return { startBlockNumber, endBlockNumber };
+  }  
 
   async getETHBalancesByEpochTime(epochTimes: number[]) {
     try {
       let totalBalance = 0;
       
       const { startBlockNumber, endBlockNumber } = await this.getBlockRange(epochTimes);
+
       if (startBlockNumber && endBlockNumber) {
         const holders = await this.getHoldersByBlockRange(startBlockNumber, endBlockNumber);
         
@@ -105,32 +127,36 @@ export class AppService {
   }
 
   async getBlockRange(epochTimes: number[]): Promise<{startBlockNumber: string, endBlockNumber: string}> {
-    const { startEpochTime, endEpochTime } = await this.getRangeDateTime(epochTimes);
+    const { startEpochTime, endEpochTime } = this.getRangeDateTime(epochTimes);
 
+    const { startBlockNumber, endBlockNumber } = await this.getBlockByTimestamp([startEpochTime, endEpochTime]);
+    
     return {
-      startBlockNumber: `0x${startEpochTime.toString(16)}`,
-      endBlockNumber: `0x${endEpochTime.toString(16)}`
+      startBlockNumber: startBlockNumber ? `0x${startBlockNumber.toString(16)}` : null,
+      endBlockNumber: endBlockNumber ? `0x${endBlockNumber.toString(16)}` : null
     }
   }
 
-  async getRangeDateTime(epochTimes: number[]): Promise<{startEpochTime: number, endEpochTime: number}> {
+  getRangeDateTime(epochTimes: number[]): {startEpochTime: number, endEpochTime: number} {
     if (epochTimes.length > 1) {
+      if (epochTimes[0] > epochTimes[1]) {
+        throw new Error('first value should be less than second value');
+      }
+
       return {
         startEpochTime: epochTimes[0],
         endEpochTime: epochTimes[1]
       }
     } else {
-      const date = new Date(epochTimes[0] * 1000);
-      const startDate = new Date(date);
-      startDate.setHours(0, 0, 0, 0);
-
-      const endDate = new Date(date);
-      endDate.setHours(23, 59, 59, 999);
-
       return {
-        startEpochTime: Math.floor(startDate.getTime() / 1000),
-        endEpochTime: Math.floor(endDate.getTime() / 1000)
+        startEpochTime: epochTimes[0],
+        endEpochTime: epochTimes[0]
       }
     }
   }
+}
+
+enum ClosestDirection {
+  UP = 'UP',
+  DOWN = 'DOWN',
 }
