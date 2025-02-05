@@ -9,7 +9,7 @@ async function bootstrap() {
 
   const appService = appContext.get(AppService);
 
-  await appService.run(1738627200);
+  await appService.run();
   await appContext.close();
 }
 bootstrap();

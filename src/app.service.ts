@@ -16,20 +16,39 @@ export class AppService {
     });
   }
 
-  async run(epochTime: number) {
-    this.getHello()
-    await this.getETHBalancesByEpochTime(epochTime);
+  async run() {
+    const epochTimes = await this.getEpochTimeInput();
+    console.log(`get ETH value for epoch time: ${epochTimes}`);
+    await this.getETHBalancesByEpochTime(epochTimes);
   }
 
-  getHello() {
-    console.log('Hello World!');
+  async getEpochTimeInput(): Promise<number[]> {
+    const readline = require('readline');
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    // 1738627200
+    const query: string = 'Enter epoch times with a range (separated by spaces) or a single value (will get data on that date): ';
+    return new Promise((resolve) => {
+      rl.question(query, (answer: string) => {
+        if (answer.includes(' ')) {
+          const epochTimes = answer.split(' ').map((value: string) => parseInt(value, 10));
+          resolve(epochTimes);
+        } else {
+          const epochTime = parseInt(answer, 10);
+          resolve([epochTime]);
+          }
+      });
+    });
   }
 
-  async getHoldersByEpochTime(blockNumberHexString: string): Promise<AssetTransfersWithMetadataResult[]> {
+  async getHoldersByBlockRange(startBlockNumber: string, endBlockNumber: string): Promise<AssetTransfersWithMetadataResult[]> {
     try {
       const assetTransfers = await this.alchemy.core.getAssetTransfers({
-        fromBlock: blockNumberHexString,
-        toBlock: blockNumberHexString,
+        fromBlock: startBlockNumber,
+        toBlock: endBlockNumber,
         category: [AssetTransfersCategory.ERC721, AssetTransfersCategory.EXTERNAL],
         contractAddresses: [this.BAYC_CONTRACT_ADDRESS],
         withMetadata: true,
@@ -42,43 +61,76 @@ export class AppService {
     }
   }
 
-  private async getBlockNumberByTimestamp(timestamp: number): Promise<number> {
+  async getBlockByTimestamp(timestamp: number): Promise<number> {
+    const latestBlock = await this.alchemy.core.getBlock("latest");
     let low = 0;
-    let high = await this.alchemy.core.getBlockNumber();
-    let blockNumber = high;
-
+    let high = latestBlock.number;
+    console.log(`latest block : ${high}`);
     while (low <= high) {
       const mid = Math.floor((low + high) / 2);
       const block = await this.alchemy.core.getBlock(mid);
 
+      console.log(`retrieved block: ${block.timestamp}`);
+
       if (block.timestamp === timestamp) {
-        return mid;
-      } else if (block.timestamp < timestamp) {
-        low = mid + 1;
+          return block.number;
+      }
+
+      if (block.timestamp < timestamp) {
+          low = mid + 1;
       } else {
-        high = mid - 1;
-        blockNumber = mid;
+          high = mid - 1;
       }
     }
 
-    return blockNumber;
+    return null;
   }
 
-  async getETHBalancesByEpochTime(epochTime: number) {
+  async getETHBalancesByEpochTime(epochTimes: number[]) {
     try {
-      const blockNumber = await this.getBlockNumberByTimestamp(epochTime);
-      console.log(`blockNumber : ${blockNumber}`);
-      const blockNumberHexString = `0x${blockNumber.toString(16)}`;
-      const holders = await this.getHoldersByEpochTime(blockNumberHexString);
-
-      console.log(`holders: ${holders.length}`);
+      let totalBalance = 0;
       
-      const totalBalance = holders.reduce((sum, holder) => sum + (holder.value || 0), 0);
+      const { startBlockNumber, endBlockNumber } = await this.getBlockRange(epochTimes);
+      if (startBlockNumber && endBlockNumber) {
+        const holders = await this.getHoldersByBlockRange(startBlockNumber, endBlockNumber);
+        
+        totalBalance = holders.reduce((sum, holder) => sum + (holder.value || 0), 0);
+      }
 
-      console.log(totalBalance);
+      console.log(`ETH value: ${totalBalance}`);
     } catch (error) {
       console.error('Failed to get ETH wallet values')
       throw error;
+    }
+  }
+
+  async getBlockRange(epochTimes: number[]): Promise<{startBlockNumber: string, endBlockNumber: string}> {
+    const { startEpochTime, endEpochTime } = await this.getRangeDateTime(epochTimes);
+
+    return {
+      startBlockNumber: `0x${startEpochTime.toString(16)}`,
+      endBlockNumber: `0x${endEpochTime.toString(16)}`
+    }
+  }
+
+  async getRangeDateTime(epochTimes: number[]): Promise<{startEpochTime: number, endEpochTime: number}> {
+    if (epochTimes.length > 1) {
+      return {
+        startEpochTime: epochTimes[0],
+        endEpochTime: epochTimes[1]
+      }
+    } else {
+      const date = new Date(epochTimes[0] * 1000);
+      const startDate = new Date(date);
+      startDate.setHours(0, 0, 0, 0);
+
+      const endDate = new Date(date);
+      endDate.setHours(23, 59, 59, 999);
+
+      return {
+        startEpochTime: Math.floor(startDate.getTime() / 1000),
+        endEpochTime: Math.floor(endDate.getTime() / 1000)
+      }
     }
   }
 }
