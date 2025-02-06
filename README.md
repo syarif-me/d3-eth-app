@@ -29,7 +29,7 @@ $ npm run start:prod
 ```
 
 ## Test
-Input epoch time with format date and time, example: 1619964734. The input can be single input or range inputs separated by space.
+Input epoch time to be used, example: 1619964734.
 ```bash
 # manual testing
 $ Enter epoch time:
