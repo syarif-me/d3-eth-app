@@ -32,5 +32,5 @@ $ npm run start:prod
 Input epoch time with format date and time, example: 1619964734. The input can be single input or range inputs separated by space.
 ```bash
 # manual testing
-$Enter epoch times with a range (separated by spaces) or a single value (will get data on that date):
+$ Enter epoch time:
 ```
