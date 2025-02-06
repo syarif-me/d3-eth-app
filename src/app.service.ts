@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Alchemy, AssetTransfersCategory, AssetTransfersWithMetadataResult, Network } from 'alchemy-sdk';
-import { ethers } from 'ethers';
+import { Alchemy, AssetTransfersCategory, AssetTransfersResult, BigNumber, Network, Utils } from 'alchemy-sdk';
 
 @Injectable()
 export class AppService {
@@ -46,14 +45,20 @@ export class AppService {
     });
   }
 
-  async getHoldersByBlockRange(startBlockNumber: string, endBlockNumber: string): Promise<AssetTransfersWithMetadataResult[]> {
+  async getHoldersByBlockRange(startBlockNumber: string, endBlockNumber: string): Promise<AssetTransfersResult[]> {
     try {
       const assetTransfers = await this.alchemy.core.getAssetTransfers({
         fromBlock: startBlockNumber,
         toBlock: endBlockNumber,
-        category: [AssetTransfersCategory.ERC721, AssetTransfersCategory.EXTERNAL],
+        category: [
+          AssetTransfersCategory.ERC721, 
+          AssetTransfersCategory.ERC20,
+          AssetTransfersCategory.EXTERNAL,
+          AssetTransfersCategory.INTERNAL,
+          AssetTransfersCategory.ERC1155,
+          AssetTransfersCategory.SPECIALNFT
+        ],
         contractAddresses: [this.BAYC_CONTRACT_ADDRESS],
-        withMetadata: true,
       });
   
       return assetTransfers.transfers; 
@@ -117,6 +122,20 @@ export class AppService {
         const holders = await this.getHoldersByBlockRange(startBlockNumber, endBlockNumber);
         
         totalBalance = holders.reduce((sum, holder) => sum + (holder.value || 0), 0);
+
+        const balances = await Promise.all(
+          holders.map(async (holder) => {
+            const fromBalance = await this.alchemy.core.getBalance(holder.from) ?? BigNumber.from(0);
+            const toBalance = await this.alchemy.core.getBalance(holder.to) ?? BigNumber.from(0);
+
+            return fromBalance.add(toBalance);
+          })
+        );
+    
+        // Convert balances from Wei to ETH and sum them up
+        balances.forEach((balance) => {
+          totalBalance += parseFloat(Utils.formatEther(balance));
+        });
       }
 
       console.log(`ETH value: ${totalBalance}`);
